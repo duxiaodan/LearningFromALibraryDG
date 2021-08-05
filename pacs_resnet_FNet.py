@@ -12,9 +12,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18, alexnet
 import PIL
-from torchlars import LARS
+# from torchlars import LARS
 import cv2
 import numpy as np
+
+from datasets import *
 
 ##################################################### Training f_theta network ###########################################
 
@@ -138,7 +140,7 @@ def train_step(x, labels, model, optimizer, tau):
   loss = F.binary_cross_entropy_with_logits(logits, pairwise_labels)
   pred = torch.sigmoid(logits)   # whether two images are similar or not
   accuracy = (pred.round().float() == pairwise_labels).sum()/float(pred.shape[0])
-      
+
   # Perform train step
   #optimizer.zero_grad()
   loss.backward()
@@ -153,10 +155,10 @@ def training_loop(model, dataset, optimizer, tau=0.1, epochs=200, device=None):
   for epoch in (range(epochs)):
     step_wise_loss = []
     step_wise_acc = []
-    for image_batch, labels in (dataset):
+    for image_batch, labels, domains in (dataset):
       image_batch = image_batch.float()
       if dev is not None:
-        image_batch, labels = image_batch.to(device), labels.to(device)
+        image_batch, labels = image_batch.to(device), labels.long().to(device)
       labels_onehot = F.one_hot(labels, CLASSES).float()
       loss, accuracy = train_step(image_batch, labels_onehot, model, optimizer, tau)
       step_wise_loss.append(loss)
@@ -182,12 +184,25 @@ data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=IMAGE_SI
                                               GaussianBlur(kernel_size=int(21)),
                                               transforms.ToTensor(),
                                               AddGaussianNoise(mean=0, std=0.2)] )
-ds = DGdata(".", IMAGE_SIZE, [src_path], transform=data_transforms)
-dataloader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True, num_workers = 4)
+# ds = DGdata(".", IMAGE_SIZE, [src_path], transform=data_transforms)
+
+# dataloader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True, num_workers = 4)
+domain_dataset = Aggregate_DomainDataset(
+        dataset_name = 'PACS',
+        domain_list = PACS_DOM_LIST,
+        data_split_dir = "/share/data/vision-greg2/xdu/dcorr_content_domain_disentanglement/data/PACS",
+        phase = "train",
+        image_transform = data_transforms,
+        batch_size=BATCH_SIZE,
+        num_workers=4,
+        use_gpu=True,
+        shuffle=True
+    )
+dataloader = domain_dataset.curr_loader
 
 model = FNet_PACS_ResNet(512, FEATURE_DIM)
 model = model.to(dev)
-optimizer = LARS(torch.optim.SGD(model.parameters(), lr=LR))
+optimizer = torch.optim.SGD(model.parameters(), lr=LR)
 epoch_wise_loss, epoch_wise_acc, model = training_loop(model, dataloader, optimizer, tau=0.1, epochs=EPOCHS, device=dev)
 
 

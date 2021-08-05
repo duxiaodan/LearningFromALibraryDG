@@ -12,9 +12,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18, alexnet
 import PIL
-from torchlars import LARS
+# from torchlars import LARS
 import cv2
 import numpy as np
+from datasets import *
 
 ##################################################### Training G_phi & C_psi (classifier) ###########################################
 
@@ -162,7 +163,7 @@ class VAE_PACS_ResNet(nn.Module):
         return z, mu, logvar
 
 pacs_resnet_fnet = FNet_PACS_ResNet(512, FEATURE_DIM)
-checkpoint = torch.load('../Models/resnet_fnet.pt')
+checkpoint = torch.load('../Models/epoch_pacs_resnet39.pt')
 pacs_resnet_fnet.load_state_dict(checkpoint['model_state_dict'])
 pacs_resnet_fnet = pacs_resnet_fnet.to(dev)
 
@@ -173,8 +174,21 @@ CELoss = nn.CrossEntropyLoss()
 classifier = classifier.to(dev)
 
 data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=IMAGE_SIZE), transforms.ToTensor()] )
-ds = DGdata(".", IMAGE_SIZE, [src_path], transform=data_transforms)
-dataloader = DataLoader(ds, batch_size=64, shuffle=True, num_workers = 4)
+# ds = DGdata(".", IMAGE_SIZE, [src_path], transform=data_transforms)
+# dataloader = DataLoader(ds, batch_size=64, shuffle=True, num_workers = 4)
+
+domain_dataset = Aggregate_DomainDataset(
+        dataset_name = 'PACS',
+        domain_list = PACS_DOM_LIST,
+        data_split_dir = "/share/data/vision-greg2/xdu/dcorr_content_domain_disentanglement/data/PACS",
+        phase = "train",
+        image_transform = data_transforms,
+        batch_size=BATCH_SIZE,
+        num_workers=4,
+        use_gpu=True,
+        shuffle=True
+    )
+dataloader = domain_dataset.curr_loader
 
 pacs_resnet_fnet.eval()
 
@@ -183,10 +197,10 @@ for epoch in range(20):
   step_wise_loss = []
   step_wise_accuracy = []
 
-  for image_batch, labels in (dataloader):
+  for image_batch, labels, domains in (dataloader):
     image_batch = image_batch.float()
     if dev is not None:
-      image_batch, labels = image_batch.to(dev), labels.to(dev)
+      image_batch, labels = image_batch.to(dev), labels.long().to(dev)
         
     # zero the parameter gradients
     opt.zero_grad()
@@ -205,8 +219,22 @@ for epoch in range(20):
     
 
 vae = VAE_PACS_ResNet().to(dev)
-VAEoptim = LARS(torch.optim.SGD(vae.parameters(), lr=0.005))
-dataloader_vae = DataLoader(ds, batch_size=64, shuffle=True, num_workers = 4)
+VAEoptim = torch.optim.SGD(vae.parameters(), lr=0.005)
+# dataloader_vae = DataLoader(ds, batch_size=64, shuffle=True, num_workers = 4)
+
+domain_dataset_vae = Aggregate_DomainDataset(
+        dataset_name = 'PACS',
+        domain_list = PACS_DOM_LIST,
+        data_split_dir = "/share/data/vision-greg2/xdu/dcorr_content_domain_disentanglement/data/PACS",
+        phase = "train",
+        image_transform = data_transforms,
+        batch_size=BATCH_SIZE,
+        num_workers=4,
+        use_gpu=True,
+        shuffle=True
+    )
+dataloader_vae = domain_dataset.curr_loader
+
 #modified loss
 def loss_function(recon_x, x, mu, logvar):
     l2 = F.mse_loss(recon_x, x.view(-1, 1, 16, 16), reduction='mean')
@@ -219,7 +247,7 @@ def trainVAE(epoch):
     vae.train()
     train_loss = 0
     print(epoch)
-    for batch_idx, (image_batch, _) in enumerate(dataloader_vae):
+    for batch_idx, (image_batch, _,_) in enumerate(dataloader_vae):
         image_batch = image_batch.float()
         image_batch = image_batch.to(dev)
         VAEoptim.zero_grad()
@@ -279,7 +307,7 @@ for run in range(5):
   
         zparam = torch.randn(1, 32).to(dev)
         zparam = zparam.detach().requires_grad_(True)
-        zoptim = LARS(torch.optim.SGD([zparam], lr=beta,momentum=0.9, nesterov=True))
+        zoptim = torch.optim.SGD([zparam], lr=beta,momentum=0.9, nesterov=True)
         Uparam = []
         L_s = []
         
