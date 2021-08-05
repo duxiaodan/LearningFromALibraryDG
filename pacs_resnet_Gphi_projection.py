@@ -279,12 +279,23 @@ for epoch in range(1, 350):
 vae.eval()
 
 data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=IMAGE_SIZE), transforms.ToTensor()] )
-test_data = DGdata(".", IMAGE_SIZE, [target_path], transform=data_transforms)
-test_dataloader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=True, num_workers = 4)
-
+# test_data = DGdata(".", IMAGE_SIZE, [target_path], transform=data_transforms)
+# test_dataloader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=True, num_workers = 4)
+test_dataset = Aggregate_DomainDataset(
+        dataset_name = 'PACS',
+        domain_list = PACS_DOM_LIST,
+        data_split_dir = "/share/data/vision-greg2/xdu/dcorr_content_domain_disentanglement/data/PACS",
+        phase = "test",
+        image_transform = data_transforms,
+        batch_size=BATCH_SIZE,
+        num_workers=4,
+        use_gpu=True,
+        shuffle=True
+    )
+test_dataloader = test_dataset.curr_loader
 
 runs = 5
-elbow = ptr
+# elbow = ptr
 accuracy_per_run = []
 for run in range(5):
   print('run:',run)
