@@ -2,7 +2,7 @@
 # coding: utf-8
 
 # In[ ]:
-
+import os
 from torch.utils.data import Dataset, DataLoader
 import os
 import torchvision
@@ -21,13 +21,19 @@ from pdb import set_trace
 import argparse
 
 from imagenet_resnet_18 import resnet18
+from optimizers import LARS
+from optimizers import LARS2
 ##################################################### Training f_theta network ###########################################
 parser = argparse.ArgumentParser(description='General PyTorch training script', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
 parser.add_argument('--arch',type =str,default = 'resnet')
-
+parser.add_argument('--test_domain', type = str,default = 'sketch')
+parser.add_argument("-exp_name","--experiment_name",type=str,default='dum')
+parser.add_argument('-wb','--wandb', action = 'store_true')
+parser.add_argument('-opt', type = str, default ='SGD')
+parser.add_argument('--project_name',type=str)
 np.random.seed(0)
-CHECKPOINT_DIR = "../Models/"
+CHECKPOINT_DIR = "Models/"
 
 dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 128
@@ -120,8 +126,9 @@ class FNet_PACS_ResNet(nn.Module):
     #self.resnet = nn.Sequential(*list(resnet.children())[:-1])
     if args.arch == 'resnet18':
         self.resnet = resnet18(pretrained = True)
-    
+     
     self.fc1 = nn.Linear(self.resnet.feature_dim,  hidden_layer_neurons)
+    #self.fc1 = nn.Linear(512,  hidden_layer_neurons)
     self.fc2 = nn.Linear(hidden_layer_neurons, output_latent_dim)
    
   def forward(self, x):
@@ -155,7 +162,7 @@ def train_step(x, labels, model, optimizer, tau):
 
   return loss.detach().cpu().numpy(), accuracy.detach().cpu().numpy()
 
-def training_loop(model, dataset, optimizer, tau=0.1, epochs=200, device=None):
+def training_loop(args,wandb,model, dataset, optimizer, tau=0.1, epochs=200, device=None):
   epoch_wise_loss = []
   epoch_wise_acc = []
   model.train()
@@ -176,14 +183,32 @@ def training_loop(model, dataset, optimizer, tau=0.1, epochs=200, device=None):
       torch.save({'epoch' : epoch,
                   'model_state_dict': model.state_dict(),
                   'optimizer_state_dict': optimizer.state_dict(),
-                  'loss': loss}, CHECKPOINT_DIR+"epoch_pacs_resnet"+str(epoch)+".pt")
+                  'loss': loss}, CHECKPOINT_DIR+"epoch_pacs_resnet_"+args.test_domain+'_'+str(epoch)+".pt")
     epoch_wise_loss.append(np.mean(step_wise_loss))
     epoch_wise_acc.append(np.mean(step_wise_acc))
     print("epoch: {} loss: {:.3f} accuracy: {:.3f} ".format(epoch + 1, np.mean(step_wise_loss), np.mean(step_wise_acc)))
 
+    if args.wandb:
+        wandb.log({'tr_loss':epoch_wise_loss})
+        wandb.log({'tr_acc':epoch_wise_acc})
+
+
   return epoch_wise_loss, epoch_wise_acc, model
 
+
 args = parser.parse_args()
+if args.wandb:
+    import wandb
+    if os.path.isdir('wand_meta_data/'+args.experiment_name):
+        print('not safe')
+        sys.exit()
+    else:
+        os.mkdir('wand_meta_data/'+args.experiment_name)
+    wandb.init(project=args.project_name, name = args.experiment_name, resume = True, dir ='wand_meta_data'+"/"+args.experiment_name+'/' )
+    wandb.config.update(args,allow_val_change= False)
+else:
+    wandb=None
+
 color_jitter = transforms.ColorJitter(0.8, 0.8, 0.8, 0.2)
 data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=IMAGE_SIZE),
                                               transforms.RandomHorizontalFlip(),
@@ -195,9 +220,14 @@ data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=IMAGE_SI
 # ds = DGdata(".", IMAGE_SIZE, [src_path], transform=data_transforms)
 
 # dataloader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True, num_workers = 4)
+
+domains_for_train = [ domain for domain in  PACS_DOM_LIST if not  domain == args.test_domain ]
+
+assert len(domains_for_train) <= 3
+
 domain_dataset = Aggregate_DomainDataset(
         dataset_name = 'PACS',
-        domain_list = PACS_DOM_LIST,
+        domain_list = domains_for_train,
         data_split_dir = "/share/data/vision-greg2/xdu/dcorr_content_domain_disentanglement/data/PACS",
         phase = "train",
         image_transform = data_transforms,
@@ -210,8 +240,12 @@ dataloader = domain_dataset.curr_loader
 
 model = FNet_PACS_ResNet(512, FEATURE_DIM,args)
 model = model.to(dev)
-optimizer = torch.optim.SGD(model.parameters(), lr=LR)
-epoch_wise_loss, epoch_wise_acc, model = training_loop(model, dataloader, optimizer, tau=0.1, epochs=EPOCHS, device=dev)
+if args.opt == 'SGD':
+    optimizer = torch.optim.SGD(model.parameters(), lr=LR)
+elif args.opt == 'LARS2':
+    optimizer = LARS2(model.parameters(), lr = LR)
+elif args.opt == 'LARS':
+    optimizer = LARS(model.parameters(), lr = LR)
 
-
+epoch_wise_loss, epoch_wise_acc, model = training_loop(args,wandb,model, dataloader, optimizer, tau=0.1, epochs=EPOCHS, device=dev)
 
