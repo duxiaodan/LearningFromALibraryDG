@@ -17,9 +17,14 @@ import cv2
 import numpy as np
 
 from datasets import *
+from pdb import set_trace
+import argparse
 
+from imagenet_resnet_18 import resnet18
 ##################################################### Training f_theta network ###########################################
+parser = argparse.ArgumentParser(description='General PyTorch training script', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
+parser.add_argument('--arch',type =str,default = 'resnet')
 
 np.random.seed(0)
 CHECKPOINT_DIR = "../Models/"
@@ -109,12 +114,14 @@ class AddGaussianNoise(object):
 
 class FNet_PACS_ResNet(nn.Module):
  
-  def __init__(self, hidden_layer_neurons, output_latent_dim):
+  def __init__(self, hidden_layer_neurons, output_latent_dim,args):
     super(FNet_PACS_ResNet, self).__init__()
-    resnet = resnet18(pretrained=True, progress=False)
+    #resnet = resnet18(pretrained=True, progress=False)
+    #self.resnet = nn.Sequential(*list(resnet.children())[:-1])
+    if args.arch == 'resnet18':
+        self.resnet = resnet18(pretrained = True)
     
-    self.resnet = nn.Sequential(*list(resnet.children())[:-1])
-    self.fc1 = nn.Linear(resnet.fc.in_features,  hidden_layer_neurons)
+    self.fc1 = nn.Linear(self.resnet.feature_dim,  hidden_layer_neurons)
     self.fc2 = nn.Linear(hidden_layer_neurons, output_latent_dim)
    
   def forward(self, x):
@@ -176,6 +183,7 @@ def training_loop(model, dataset, optimizer, tau=0.1, epochs=200, device=None):
 
   return epoch_wise_loss, epoch_wise_acc, model
 
+args = parser.parse_args()
 color_jitter = transforms.ColorJitter(0.8, 0.8, 0.8, 0.2)
 data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=IMAGE_SIZE),
                                               transforms.RandomHorizontalFlip(),
@@ -200,7 +208,7 @@ domain_dataset = Aggregate_DomainDataset(
     )
 dataloader = domain_dataset.curr_loader
 
-model = FNet_PACS_ResNet(512, FEATURE_DIM)
+model = FNet_PACS_ResNet(512, FEATURE_DIM,args)
 model = model.to(dev)
 optimizer = torch.optim.SGD(model.parameters(), lr=LR)
 epoch_wise_loss, epoch_wise_acc, model = training_loop(model, dataloader, optimizer, tau=0.1, epochs=EPOCHS, device=dev)
